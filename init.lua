@@ -47,7 +47,7 @@ opt.updatetime = 100
 opt.scrolloff = 10
 opt.sidescrolloff = 8
 
--- Декорации
+
 opt.fillchars = { eob = " ", fold = " ", foldopen = "", foldsep = " ", foldclose = "" }
 opt.signcolumn = "yes"
 
@@ -228,15 +228,25 @@ local on_attach = function(client, bufnr)
     nmap('<leader>ca', vim.lsp.buf.code_action, '[C]ode [A]ction')
     nmap('<leader>ds', require('telescope.builtin').lsp_document_symbols, '[D]ocument [S]ymbols')
 end
-
 -- 1. LUA_LS
 vim.lsp.config('lua_ls', {
-    on_attach = on_attach,
-    capabilities = capabilities,
-    settings = { Lua = { diagnostics = { globals = { 'vim' } }, workspace = { checkThirdParty = false } } }
-})
+       on_attach = on_attach,
+      capabilities = capabilities,
+   root_dir = require('lspconfig.util').root_pattern(".git", "init.lua", ".luarc.json"),
+      settings = {
+          Lua = {
+              diagnostics = { globals = { 'vim' } },
+              workspace = {
+       checkThirdParty = false,
+                  library = {
+						vim.env.VIMRUNTIME,
+						"${3rd}/luv/library",
+                  },
+              },
+          },
+      },
+	})
 vim.lsp.enable('lua_ls')
-
 -- 2. PYRIGHT (PYTHON)
 vim.lsp.config('pyright', {
     on_attach = on_attach,
