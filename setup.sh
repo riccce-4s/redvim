@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # setup.sh — Installer for REDVIM configuration on Linux / macOS
 # Usage: bash setup.sh
+# This script:
+#  - checks for git and neovim and attempts a best-effort install via common package managers
+#  - backs up any existing Neovim config
+#  - clones the REDVIM repository into the Neovim config directory
+#  - runs Neovim headless to trigger plugin installation via lazy.nvim
 set -euo pipefail
 
 REPO="https://github.com/riccce-4s/redvim.git"
@@ -46,7 +51,7 @@ fi
 
 # Backup existing config if present
 if [ -d "$NVIM_CONFIG_DIR" ] || [ -f "$NVIM_CONFIG_DIR/init.lua" ]; then
-  TIMESTAMP="").$(date +%Y%m%d%H%M%S))
+  TIMESTAMP="$(date +%Y%m%d%H%M%S)"
   BACKUP="${NVIM_CONFIG_DIR}.backup.${TIMESTAMP}"
   echo "Backing up existing config to: $BACKUP"
   mv "$NVIM_CONFIG_DIR" "$BACKUP"
@@ -67,7 +72,7 @@ chmod -R u+rwX "$NVIM_CONFIG_DIR"
 
 # Try headless install of plugins via lazy.nvim
 echo "Running Neovim headless to install plugins (may take a while)..."
-# load init.lua and then call lazy sync
+# Load init.lua and call lazy.sync() — best-effort; user can run :Lazy sync manually if needed
 nvim --headless -u "${NVIM_CONFIG_DIR}/init.lua" \
   -c "lua if pcall(function() require('lazy').sync() end) then vim.cmd('qa') else vim.cmd('qa') end" \
   || echo "Headless plugin sync finished (or failed). If plugins aren't installed, open nvim and run :Lazy sync or :Lazy install."
