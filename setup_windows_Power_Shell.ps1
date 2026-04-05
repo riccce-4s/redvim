@@ -1,14 +1,6 @@
 <#
-setup.ps1 — Installer for REDVIM configuration on Windows (PowerShell)
-Run: Run PowerShell (may require Administrator for package installs)
-Example: powershell -ExecutionPolicy Bypass -File .\setup.ps1
-
-This script:
- - prefers XDG_CONFIG_HOME for config path, falls back to %LOCALAPPDATA%\nvim
- - checks for git and neovim and attempts installation via winget (best-effort)
- - backs up existing config if present
- - clones the REDVIM repository to the target config path
- - runs Neovim headless to trigger lazy.nvim plugin sync (best-effort)
+setup.ps1 — REDVIM configuration installer for Windows
+Usage: powershell -ExecutionPolicy Bypass -File .\setup.ps1
 #>
 
 param(
@@ -16,71 +8,113 @@ param(
     [string]$Branch = "main"
 )
 
+# UI Helper functions
 function Write-Ok($m) { Write-Host ">>> $m" -ForegroundColor Green }
 function Write-Err($m) { Write-Host ">>> $m" -ForegroundColor Red }
+function Write-Info($m) { Write-Host ">>> $m" -ForegroundColor Cyan }
 
-Write-Ok "REDVIM installer (Windows PowerShell)"
+Write-Ok "Starting REDVIM installer (Windows PowerShell)..."
 
-# Resolve config path: prefer XDG_CONFIG_HOME, otherwise use %LOCALAPPDATA%\nvim
+# 1. Check for Administrator privileges
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Info "Note: Running without Admin rights. Some installations may prompt for elevation."
+}
+
+# 2. Dependency Check & Installation Function
+function Install-Dependency($cmd, $id, $name) {
+    if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+        Write-Info "$name not found. Attempting to install via winget..."
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget install --id $id -e --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -ne 0) {
+                Write-Err "Failed to install $name via winget."
+                exit 1
+            }
+            # Refresh Path after each install to ensure the tool is available
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        } else {
+            Write-Err "winget not found. Please install $name manually."
+            exit 1
+        }
+    } else {
+        Write-Ok "$name is already installed."
+    }
+}
+
+# Install core tools
+Install-Dependency "git" "Git.Git" "Git"
+Install-Dependency "nvim" "Neovim.Neovim" "Neovim"
+Install-Dependency "node" "OpenJS.NodeJS" "Node.js"
+Install-Dependency "rg" "BurntSushi.ripgrep" "Ripgrep"
+
+# 3. Install JetBrains Mono Nerd Font
+Write-Info "Installing JetBrains Mono Nerd Font..."
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+    winget install --id "GitHub.nerdfonts.JetBrainsMono" -e --accept-package-agreements --accept-source-agreements
+}
+
+# 4. Resolve configuration path
 $config = $env:XDG_CONFIG_HOME
 if (-not $config -or $config -eq "") {
     $config = Join-Path $env:LOCALAPPDATA "nvim"
 }
-Write-Ok "Target Neovim config: $config"
 
-# Check git and nvim presence
-$git = Get-Command git -ErrorAction SilentlyContinue
-$nvim = Get-Command nvim -ErrorAction SilentlyContinue
-
-if (-not $git) {
-    Write-Host "git not found. Attempting to install via winget..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
-    } else {
-        Write-Err "winget not available. Please install git manually and re-run."
-        exit 1
-    }
-}
-
-if (-not $nvim) {
-    Write-Host "Neovim not found. Attempting to install via winget..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Neovim.Neovim -e --accept-package-agreements --accept-source-agreements
-    } else {
-        Write-Err "winget not available. Please install Neovim manually and re-run."
-        exit 1
-    }
-}
-
-# If config exists, backup
+# 5. Backup existing configuration
 if (Test-Path $config) {
     $ts = Get-Date -Format "yyyyMMddHHmmss"
     $backup = "${config}.backup.${ts}"
-    Write-Ok "Backing up existing config to $backup"
-    Rename-Item -Path $config -NewName $backup -ErrorAction Stop
+    Write-Ok "Backing up existing config to: $backup"
+    try {
+        Rename-Item -Path $config -NewName $backup -ErrorAction Stop
+    } catch {
+        Write-Err "Could not rename existing folder. Please close Neovim and try again."
+        exit 1
+    }
 }
 
-# Clone repo
+# 6. Clone repository to a temporary location
 $tmpPath = Join-Path $env:TEMP ("redvim_" + [guid]::NewGuid().ToString())
-New-Item -ItemType Directory -Path $tmpPath -Force | Out-Null
-Write-Ok "Cloning $Repo (branch $Branch) to $tmpPath"
-git clone --depth 1 --branch $Branch $Repo $tmpPath
+Write-Ok "Cloning repository $Repo (branch: $Branch)..."
 
-# Move to config location
+try {
+    git clone --depth 1 --branch $Branch $Repo $tmpPath
+    if ($LASTEXITCODE -ne 0) { throw "Git clone failed" }
+} catch {
+    Write-Err "Error during cloning. Check your connection or the URL: $Repo"
+    exit 1
+}
+
+# 7. Deploy files to the config directory
+Write-Ok "Installing configuration files to $config..."
 $parent = Split-Path $config -Parent
-if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-Move-Item -Path $tmpPath -Destination $config -Force
+if (-not (Test-Path $parent)) { 
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null 
+}
 
-Write-Ok "Configuration placed in $config"
+try {
+    Move-Item -Path $tmpPath -Destination $config -Force
+} catch {
+    Write-Err "Failed to move files. The directory might be in use."
+    exit 1
+}
 
-# Run headless Neovim to trigger lazy sync
-Write-Ok "Running nvim headless to install plugins..."
-# Use -u to load the new init.lua then call require('lazy').sync() (best-effort)
+# 8. Post-install: Plugin sync via lazy.nvim
+Write-Ok "Syncing plugins via lazy.nvim..."
 $nvimCmd = @(
     "--headless",
     "-u", (Join-Path $config "init.lua"),
-    "-c", "lua if pcall(function() require('lazy').sync() end) then vim.cmd('qa') else vim.cmd('qa') end"
+    "-c", "lazy sync",
+    "-c", "qa"
 )
-& nvim @nvimCmd
 
-Write-Ok "REDVIM installation finished. Open nvim to verify."
+try {
+    & nvim @nvimCmd
+    Write-Ok "Plugins synchronized successfully."
+} catch {
+    Write-Info "Headless sync finished. Open nvim to complete any remaining setup."
+}
+
+Write-Ok "REDVIM installation completed successfully!"
+Write-Info "1. Set terminal font to 'JetBrainsMono NF'."
+Write-Info "2. Run 'nvim' to start."
