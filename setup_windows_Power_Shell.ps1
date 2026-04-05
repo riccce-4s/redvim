@@ -51,7 +51,7 @@ Install-Dependency "rg" "BurntSushi.ripgrep" "Ripgrep"
 # 3. Install JetBrains Mono Nerd Font
 Write-Info "Installing JetBrains Mono Nerd Font..."
 if (Get-Command winget -ErrorAction SilentlyContinue) {
-    winget install --id "GitHub.nerdfonts.JetBrainsMono" -e --accept-package-agreements --accept-source-agreements
+    winget install --id "DEVCOM.JetBrainsMonoNerdFont" -e --accept-package-agreements --accept-source-agreements
 }
 
 # 4. Resolve configuration path
